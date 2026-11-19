@@ -47,7 +47,11 @@ public class Store {
             if ("icsee".equals(type)) {
                 int s = hq ? 0 : 1;
                 String base = "rtsp://" + ip + ":" + port;
-                String auth = "rtsp://" + user + ":" + pass + "@" + ip + ":" + port;
+                String auth = "rtsp://" + android.net.Uri.encode(user) + ":" + android.net.Uri.encode(pass) + "@" + ip + ":" + port;
+                // Same iCSee path but also with login in the address, so the player can
+                // answer the camera's "401 password required" challenge.
+                l.add(auth + "/user=" + user + "&password=" + pass + "&channel=" + channel + "&stream=" + s + ".sdp?real_stream");
+                l.add(auth + "/");
                 l.add(icsee(s));
                 l.add(base + "/user=" + user + "&password=" + pass + "&channel=" + channel + "&stream=" + s + ".sdp");
                 l.add(base + "/user=" + user + "_password=" + pass + "_channel=" + channel + "_stream=" + s + ".sdp");
