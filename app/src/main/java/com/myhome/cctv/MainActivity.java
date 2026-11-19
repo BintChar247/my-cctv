@@ -5,7 +5,6 @@ import android.app.AlertDialog;
 import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Typeface;
-import android.net.Uri;
 import android.os.Bundle;
 import android.text.InputType;
 import android.view.Gravity;
@@ -19,7 +18,6 @@ import android.widget.RadioButton;
 import android.widget.RadioGroup;
 import android.widget.ScrollView;
 import android.widget.TextView;
-import android.widget.VideoView;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -31,7 +29,7 @@ public class MainActivity extends Activity {
     private static final int ACCENT = Color.parseColor("#2BB3A3");
 
     private List<Store.Cam> cams = new ArrayList<>();
-    private final List<VideoView> players = new ArrayList<>();
+    private final List<CamView> players = new ArrayList<>();
     private LinearLayout grid;
     private TextView empty;
 
@@ -55,8 +53,11 @@ public class MainActivity extends Activity {
         Button refresh = smallButton("⟳");
         refresh.setOnClickListener(v -> startAll());
         bar.addView(refresh);
+        Button scan = smallButton("Scan");
+        scan.setOnClickListener(v -> scanDialog());
+        bar.addView(scan);
         Button add = smallButton("+ Add");
-        add.setOnClickListener(v -> editDialog(-1));
+        add.setOnClickListener(v -> editDialog(-1, null));
         bar.addView(add);
         root.addView(bar);
 
@@ -67,7 +68,7 @@ public class MainActivity extends Activity {
         grid.setPadding(dp(6), 0, dp(6), dp(12));
         holder.addView(grid);
         empty = new TextView(this);
-        empty.setText("No cameras yet.\nTap “+ Add” to add your iCSee, EYESEC or other camera.");
+        empty.setText("No cameras yet.\nTap “Scan” to find cameras on your Wi-Fi,\nor “+ Add” to enter one by hand.");
         empty.setTextColor(Color.LTGRAY);
         empty.setGravity(Gravity.CENTER);
         empty.setPadding(dp(24), dp(80), dp(24), 0);
@@ -106,69 +107,82 @@ public class MainActivity extends Activity {
     }
 
     private View tile(final int idx) {
-        Store.Cam c = cams.get(idx);
+        final Store.Cam c = cams.get(idx);
         FrameLayout f = new FrameLayout(this);
-        f.setBackgroundColor(Color.BLACK);
+        final CamView cv = new CamView(this);
+        cv.setLabel(c.name.isEmpty() ? "Camera " + (idx + 1) : c.name);
+        cv.setTag(c);
+        f.addView(cv, new FrameLayout.LayoutParams(-1, -1));
+        players.add(cv);
 
-        final VideoView vv = new VideoView(this);
-        vv.setTag(c.sub());
-        f.addView(vv, new FrameLayout.LayoutParams(-1, -1, Gravity.CENTER));
-        players.add(vv);
-
-        final TextView status = new TextView(this);
-        status.setText("Connecting…");
-        status.setTextColor(Color.LTGRAY);
-        status.setTextSize(12);
-        status.setGravity(Gravity.CENTER);
-        f.addView(status, new FrameLayout.LayoutParams(-1, -1));
-
-        TextView label = new TextView(this);
-        label.setText(c.name.isEmpty() ? "Camera " + (idx + 1) : c.name);
-        label.setTextColor(Color.WHITE);
-        label.setTextSize(12);
-        label.setBackgroundColor(0x88000000);
-        label.setPadding(dp(6), dp(2), dp(6), dp(2));
-        f.addView(label, new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.START));
-
-        vv.setOnPreparedListener(mp -> {
-            mp.setVolume(0f, 0f);       // grid is muted
-            status.setVisibility(View.GONE);
-            vv.start();
-        });
-        vv.setOnErrorListener((mp, what, extra) -> {
-            status.setVisibility(View.VISIBLE);
-            status.setText("Offline\ntap ⟳ to retry");
-            return true;
-        });
-
-        View touch = new View(this);   // VideoView eats taps, so put a layer on top
+        View touch = new View(this);   // tap layer above the video
         touch.setOnClickListener(v -> {
             Intent it = new Intent(this, PlayerActivity.class);
-            it.putExtra("url", c.main());
-            it.putExtra("name", label.getText().toString());
+            it.putExtra("idx", idx);
             startActivity(it);
         });
-        touch.setOnLongClickListener(v -> { tileMenu(idx); return true; });
+        touch.setOnLongClickListener(v -> { tileMenu(idx, cv); return true; });
         f.addView(touch, new FrameLayout.LayoutParams(-1, -1));
         return f;
     }
 
     private void startAll() {
-        for (VideoView vv : players) {
-            vv.stopPlayback();
-            vv.setVideoURI(Uri.parse((String) vv.getTag()));
+        for (CamView cv : players) {
+            Store.Cam c = (Store.Cam) cv.getTag();
+            cv.start(c.candidates(false), c.host(), c.rtspPort(), true);
         }
     }
 
     private void stopAll() {
-        for (VideoView vv : players) vv.stopPlayback();
+        for (CamView cv : players) cv.stop();
     }
 
-    private void tileMenu(final int idx) {
+    private void scanDialog() {
+        final String net = Scanner.subnet(this);
+        if (net == null) {
+            new AlertDialog.Builder(this).setMessage("Connect to your home Wi-Fi first.")
+                    .setPositiveButton("OK", null).show();
+            return;
+        }
+        final AlertDialog wait = new AlertDialog.Builder(this)
+                .setTitle("Scanning " + net + "x …")
+                .setMessage("Looking for cameras on your Wi-Fi.\nThis takes about 15 seconds.")
+                .setCancelable(false).show();
+        new Thread(() -> {
+            final List<Scanner.Found> found = Scanner.scan(net);
+            runOnUiThread(() -> {
+                wait.dismiss();
+                if (found.isEmpty()) {
+                    new AlertDialog.Builder(this).setTitle("No cameras found")
+                            .setMessage("Your phone is " + Scanner.myIp(this) + ".\n\n"
+                                    + "No device on this Wi-Fi answered on camera ports. "
+                                    + "The cameras may be on a different Wi-Fi/router, "
+                                    + "or the router may block devices from seeing each other "
+                                    + "(“AP isolation” / guest network).")
+                            .setPositiveButton("OK", null).show();
+                    return;
+                }
+                String[] items = new String[found.size()];
+                for (int i = 0; i < items.length; i++) items[i] = found.get(i).describe();
+                new AlertDialog.Builder(this)
+                        .setTitle("Found " + found.size() + " — tap to add")
+                        .setItems(items, (d, w) -> editDialog(-1, found.get(w).ip))
+                        .setPositiveButton("Close", null).show();
+            });
+        }).start();
+    }
+
+    private void tileMenu(final int idx, final CamView cv) {
         new AlertDialog.Builder(this)
-                .setTitle(cams.get(idx).name)
-                .setItems(new String[]{"Edit", "Move up", "Delete"}, (d, w) -> {
-                    if (w == 0) editDialog(idx);
+                .setTitle(cv.getLabel())
+                .setItems(new String[]{"Edit", "Move up", "Delete", "Details (why it fails)"}, (d, w) -> {
+                    if (w == 3) {
+                        String log = cv.getLog();
+                        new AlertDialog.Builder(this).setTitle("Connection details")
+                                .setMessage("Phone IP: " + Scanner.myIp(this) + "\n\n"
+                                        + (log.isEmpty() ? "Still connecting…" : log))
+                                .setPositiveButton("OK", null).show();
+                    } else if (w == 0) editDialog(idx, null);
                     else if (w == 1 && idx > 0) {
                         cams.add(idx - 1, cams.remove(idx));
                         Store.save(this, cams); rebuild();
@@ -183,8 +197,9 @@ public class MainActivity extends Activity {
     }
 
     /** Add (idx = -1) or edit a camera. */
-    private void editDialog(final int idx) {
+    private void editDialog(final int idx, String prefillIp) {
         final Store.Cam c = idx >= 0 ? cams.get(idx) : new Store.Cam();
+        if (prefillIp != null) c.ip = prefillIp;
         LinearLayout form = new LinearLayout(this);
         form.setOrientation(LinearLayout.VERTICAL);
         form.setPadding(dp(20), dp(8), dp(20), 0);

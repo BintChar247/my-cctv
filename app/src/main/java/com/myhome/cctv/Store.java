@@ -41,6 +41,41 @@ public class Store {
                     + "&channel=" + channel + "&stream=" + stream + ".sdp?real_stream";
         }
 
+        /** All addresses worth trying, best first (firmwares differ). */
+        public java.util.List<String> candidates(boolean hq) {
+            java.util.List<String> l = new java.util.ArrayList<>();
+            if ("icsee".equals(type)) {
+                int s = hq ? 0 : 1;
+                String base = "rtsp://" + ip + ":" + port;
+                String auth = "rtsp://" + user + ":" + pass + "@" + ip + ":" + port;
+                l.add(icsee(s));
+                l.add(base + "/user=" + user + "&password=" + pass + "&channel=" + channel + "&stream=" + s + ".sdp");
+                l.add(base + "/user=" + user + "_password=" + pass + "_channel=" + channel + "_stream=" + s + ".sdp");
+                l.add(auth + "/stream" + (s + 1));
+                l.add(auth + "/live/ch0" + s + "_0");
+                if (!hq) l.add(icsee(0));   // some cameras have no sub-stream
+            } else {
+                String m = mainUrl == null ? "" : mainUrl.trim();
+                String sb = subUrl == null ? "" : subUrl.trim();
+                if (!hq && !sb.isEmpty()) l.add(sb);
+                if (!m.isEmpty()) l.add(m);
+            }
+            return l;
+        }
+
+        public String host() {
+            if ("icsee".equals(type)) return ip;
+            try { return android.net.Uri.parse(mainUrl.trim()).getHost(); } catch (Exception e) { return ""; }
+        }
+
+        public int rtspPort() {
+            if ("icsee".equals(type)) return port;
+            try {
+                int p = android.net.Uri.parse(mainUrl.trim()).getPort();
+                return p > 0 ? p : 554;
+            } catch (Exception e) { return 554; }
+        }
+
         JSONObject toJson() throws Exception {
             JSONObject o = new JSONObject();
             o.put("name", name); o.put("type", type); o.put("ip", ip); o.put("port", port);
